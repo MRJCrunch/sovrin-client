@@ -59,7 +59,7 @@ class AgentIssuer:
             CLAIM_FIELD: str(claim),
             CLAIM_DEF_SEQ_NO: public_key.seqId,
             REVOC_REG_SEQ_NO: 0,
-            SCHEMA_SEQ_NO: schema.seqId
+            SCHEMA_SEQ_NO: body[SCHEMA_SEQ_NO]
         }
 
         resp = self.getCommonMsg(CLAIM, claimDetails)
