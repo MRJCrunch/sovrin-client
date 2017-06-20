@@ -33,24 +33,21 @@ class AgentIssuer:
         link = self.verifyAndGetLink(msg)
         if not link:
             raise NotImplementedError
-        name = body[NAME]
-        if not self.is_claim_available(link, name):
+
+        schemaId = ID(schemaId=body[SCHEMA_SEQ_NO])
+        schema = await self.issuer.wallet.getSchema(schemaId)
+
+        if not self.is_claim_available(link, schema.name):
             self.notifyToRemoteCaller(
                 EVENT_NOTIFY_MSG, "This claim is not yet available.",
                 self.wallet.defaultId, frm,
                 origReqId=body.get(f.REQ_ID.nm))
             return
 
-        version = body[VERSION]
-        origin = body[ORIGIN]
-
-        schemaKey = SchemaKey(name, version, origin)
-        schema = await self.issuer.wallet.getSchema(ID(schemaKey))
-        schemaId = ID(schemaKey=schemaKey, schemaId=schema.seqId)
-
         public_key = await self.issuer.wallet.getPublicKey(schemaId)
         claimReq = ClaimRequest.from_str_dict(body[CLAIM_REQ_FIELD], public_key.N)
 
+        schemaKey = SchemaKey(schema.name, schema.version, schema.issuerId)
         self._add_attribute(schemaKey=schemaKey, proverId=claimReq.userId,
                             link=link)
 
