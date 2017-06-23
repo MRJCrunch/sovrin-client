@@ -2,6 +2,7 @@ from abc import abstractmethod
 from typing import Dict, Any
 
 from plenum.common.constants import NAME, VERSION, ORIGIN
+import json
 from plenum.common.types import f
 
 from anoncreds.protocol.issuer import Issuer
@@ -9,7 +10,7 @@ from anoncreds.protocol.types import SchemaKey, ID
 from anoncreds.protocol.types import ClaimRequest
 from sovrin_client.agent.constants import EVENT_NOTIFY_MSG, CLAIMS_LIST_FIELD
 from sovrin_client.agent.msg_constants import CLAIM, CLAIM_REQ_FIELD, CLAIM_FIELD, \
-    AVAIL_CLAIM_LIST, SCHEMA_SEQ_NO
+    AVAIL_CLAIM_LIST, CLAIM_DEF_SEQ_NO, REVOC_REG_SEQ_NO, CLAIMS_SIGNATURE_FIELD, SCHEMA_SEQ_NO
 from sovrin_common.identity import Identity
 
 from sovrin_client.client.wallet.attribute import Attribute
@@ -51,13 +52,15 @@ class AgentIssuer:
         self._add_attribute(schemaKey=schemaKey, proverId=claimReq.userId,
                             link=link)
 
-        claim = await self.issuer.issueClaim(schemaId, claimReq)
+        (signature, claim) = await self.issuer.issueClaim(schemaId, claimReq)
 
         claimDetails = {
-            NAME: schema.name,
-            VERSION: schema.version,
-            CLAIM_FIELD: claim.toStrDict(),
-            f.IDENTIFIER.nm: schema.issuerId
+            CLAIMS_SIGNATURE_FIELD: signature.to_str_dict(),
+            f.IDENTIFIER.nm: schema.issuerId,
+            CLAIM_FIELD: json.dumps(claim),
+            CLAIM_DEF_SEQ_NO: public_key.seqId,
+            REVOC_REG_SEQ_NO: 0,
+            SCHEMA_SEQ_NO: body[SCHEMA_SEQ_NO]
         }
 
         resp = self.getCommonMsg(CLAIM, claimDetails)

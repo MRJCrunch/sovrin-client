@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Any
 from collections import OrderedDict
 
@@ -12,7 +13,7 @@ from anoncreds.protocol.types import SchemaKey, ID, Claims, ProofInput
 from anoncreds.protocol.utils import toDictWithStrValues
 from sovrin_client.agent.msg_constants import CLAIM_REQUEST, PROOF, CLAIM_FIELD, \
     CLAIM_REQ_FIELD, PROOF_FIELD, PROOF_INPUT_FIELD, REVEALED_ATTRS_FIELD, \
-    REQ_AVAIL_CLAIMS, ISSUER_DID, CLAIM_DEF_SEQ_NO, SCHEMA_SEQ_NO
+    REQ_AVAIL_CLAIMS, ISSUER_DID, CLAIM_DEF_SEQ_NO, CLAIMS_SIGNATURE_FIELD, SCHEMA_SEQ_NO
 from sovrin_client.client.wallet.types import ProofRequest
 from sovrin_client.client.wallet.link import Link
 from sovrin_common.util import getNonceForProof
@@ -48,7 +49,6 @@ class AgentProver:
         else:
             self.loop.run_until_complete(
                 self.send_claim(link, schemaKey))
-
 
     # async def send_claim(self, link, claim_to_request):
     #     return await self.sendReqClaimAsync(link, claim_to_request)
@@ -112,18 +112,15 @@ class AgentProver:
         li = self._getLinkByTarget(getCryptonym(issuerId))
         if li:
             self.notifyResponseFromMsg(li.name, body.get(f.REQ_ID.nm))
-            self.notifyMsgListener('    Received claim "{}".\n'.format(
-                claim[NAME]))
-            name, version, claimAuthor = \
-                claim[NAME], claim[VERSION], claim[f.IDENTIFIER.nm]
 
-            schemaKey = SchemaKey(name, version, claimAuthor)
-            schema = await self.prover.wallet.getSchema(ID(schemaKey))
-            schemaId = ID(schemaKey=schemaKey, schemaId=schema.seqId)
+            schemaId = ID(schemaId=claim[SCHEMA_SEQ_NO])
 
-            claim = Claims.fromStrDict(claim[CLAIM_FIELD])
+            pk = await self.prover.wallet.getPublicKey(schemaId)
 
-            await self.prover.processClaim(schemaId, claim)
+            claims = json.loads(claim[CLAIM_FIELD])
+            signature = Claims.from_str_dict(claim[CLAIMS_SIGNATURE_FIELD], pk.N)
+
+            await self.prover.processClaim(schemaId, claims, signature)
         else:
             self.notifyMsgListener("No matching link found")
 
@@ -175,17 +172,16 @@ class AgentProver:
             claimAttrs = OrderedDict()
             for attr in schema.attrNames:
                 claimAttrs[attr] = None
-            claim = None
+            attrs = None
             try:
-                claim = await self.prover.wallet.getClaims(schemaKeyId)
+                attrs = await self.prover.wallet.getClaim(schemaKeyId)
             except ValueError:
                 pass  # it means no claim was issued
 
-            if claim:
-                issuedAttributes = claim.primaryClaim.attrs
-                if set(claimAttrs.keys()).intersection(issuedAttributes.keys()):
+            if attrs:
+                if set(claimAttrs.keys()).intersection(attrs.keys()):
                     for k in claimAttrs.keys():
-                        claimAttrs[k] = issuedAttributes[k]
+                        claimAttrs[k] = attrs[k][0]
             matchingLinkAndReceivedClaim.append((li, cl, claimAttrs))
         return matchingLinkAndReceivedClaim
 

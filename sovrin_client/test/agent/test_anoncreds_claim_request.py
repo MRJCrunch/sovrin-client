@@ -40,7 +40,7 @@ def test_claim_request_from_libsovrin_works(aliceAgent, aliceAcceptedFaber, alic
 
     # 2. check that claim is received from Faber
     async def chkClaims():
-        claim = await aliceAgent.prover.wallet.getClaims(ID(schemaKey))
+        claim = await aliceAgent.prover.wallet.getClaimSignature(ID(schemaKey))
         assert claim.primaryClaim
 
     emptyLooper.run(eventually(chkClaims, timeout=timeout))
