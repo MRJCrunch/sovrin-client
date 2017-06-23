@@ -272,7 +272,7 @@ class Walleted(AgentIssuer, AgentProver, AgentVerifier):
         self._attribDefs[attr_def.name] = attr_def
 
     async def get_claim(self, schema_id: ID):
-        return await self.prover.wallet.getClaims(schema_id)
+        return await self.prover.wallet.getClaimSignature(schema_id)
 
     def new_identifier(self, seed=None):
         idr, _ = self.wallet.addIdentifier(seed=seed)

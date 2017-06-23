@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Any
 from collections import OrderedDict
 
@@ -116,7 +117,7 @@ class AgentProver:
 
             pk = await self.prover.wallet.getPublicKey(schemaId)
 
-            claims = eval(claim[CLAIM_FIELD])
+            claims = json.loads(claim[CLAIM_FIELD])
             signature = Claims.from_str_dict(claim[CLAIMS_SIGNATURE_FIELD], pk.N)
 
             await self.prover.processClaim(schemaId, claims, signature)
@@ -171,17 +172,16 @@ class AgentProver:
             claimAttrs = OrderedDict()
             for attr in schema.attrNames:
                 claimAttrs[attr] = None
-            claim = None
+            attrs = None
             try:
-                claim = await self.prover.wallet.getClaims(schemaKeyId)
+                attrs = await self.prover.wallet.getClaim(schemaKeyId)
             except ValueError:
                 pass  # it means no claim was issued
 
-            if claim:
-                issuedAttributes = claim.primaryClaim.attrs
-                if set(claimAttrs.keys()).intersection(issuedAttributes.keys()):
+            if attrs:
+                if set(claimAttrs.keys()).intersection(attrs.keys()):
                     for k in claimAttrs.keys():
-                        claimAttrs[k] = issuedAttributes[k]
+                        claimAttrs[k] = attrs[k][0]
             matchingLinkAndReceivedClaim.append((li, cl, claimAttrs))
         return matchingLinkAndReceivedClaim
 

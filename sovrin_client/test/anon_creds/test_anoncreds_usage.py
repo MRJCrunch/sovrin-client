@@ -48,8 +48,8 @@ def testAnonCredsPrimaryOnly(issuer, prover, verifier, attrRepo, primes1, looper
 
         # 5. request Claims
         claimsReq = await prover.createClaimRequest(schemaId, proverId, False)
-        claims = await issuer.issueClaim(schemaId, claimsReq)
-        await prover.processClaim(schemaId, claims)
+        (signature, claims) = await issuer.issueClaim(schemaId, claimsReq)
+        await prover.processClaim(schemaId, claims, signature)
 
         # 6. proof Claims
         proofInput = ProofInput(
