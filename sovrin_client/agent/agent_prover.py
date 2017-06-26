@@ -9,7 +9,7 @@ from plenum.common.types import f
 from plenum.common.util import getCryptonym
 
 from anoncreds.protocol.prover import Prover
-from anoncreds.protocol.types import SchemaKey, ID, Claims, ProofInput
+from anoncreds.protocol.types import SchemaKey, ID, Claims, ProofInput, AttributeValues, AttributeInfo
 from anoncreds.protocol.utils import toDictWithStrValues
 from sovrin_client.agent.msg_constants import CLAIM_REQUEST, PROOF, CLAIM_FIELD, \
     CLAIM_REQ_FIELD, PROOF_FIELD, PROOF_INPUT_FIELD, REVEALED_ATTRS_FIELD, \
@@ -18,6 +18,7 @@ from sovrin_client.client.wallet.types import ProofRequest
 from sovrin_client.client.wallet.link import Link
 from sovrin_common.util import getNonceForProof
 from sovrin_common.exceptions import LinkNotReady
+import uuid
 
 
 class AgentProver:
@@ -98,7 +99,7 @@ class AgentProver:
                     name=proofReqName,
                     version=body.get(VERSION),
                     attributes=body.get(ATTRIBUTES),
-                    verifiableAttributes=body.get(VERIFIABLE_ATTRIBUTES)
+                    verifiableAttributes=json.loads(body.get(VERIFIABLE_ATTRIBUTES))
                 )
             )
         else:
@@ -117,7 +118,7 @@ class AgentProver:
 
             pk = await self.prover.wallet.getPublicKey(schemaId)
 
-            claims = json.loads(claim[CLAIM_FIELD])
+            claims = {k: AttributeValues.from_str_dict(v) for k, v in json.loads(claim[CLAIM_FIELD]).items()}
             signature = Claims.from_str_dict(claim[CLAIMS_SIGNATURE_FIELD], pk.N)
 
             await self.prover.processClaim(schemaId, claims, signature)
@@ -136,19 +137,22 @@ class AgentProver:
         # invitation
         nonce = getNonceForProof(link.invitationNonce)
 
-        revealedAttrNames = proofRequest.verifiableAttributes
-        proofInput = ProofInput(revealedAttrs=revealedAttrNames)
+        revealedAttrs = proofRequest.verifiableAttributes
+        proofInput = ProofInput(nonce=nonce, revealedAttrs=revealedAttrs)
         # TODO rename presentProof to buildProof or generateProof
-        proof, revealedAttrs = await self.prover.presentProof(proofInput, nonce)
-        revealedAttrs.update(proofRequest.selfAttestedAttrs)
+
+        proof = await self.prover.presentProof(proofInput)
+        proof.requestedProof.self_attested_attrs.update(proofRequest.selfAttestedAttrs)
         op = OrderedDict([
             (TYPE, PROOF),
             (NAME, proofRequest.name),
             (VERSION, proofRequest.version),
             (NONCE, link.invitationNonce),
-            (PROOF_FIELD, proof.toStrDict()),
-            (PROOF_INPUT_FIELD, proofInput.toStrDict()),  # TODO _F_ why do we need to send this? isn't the same data passed as keys in 'proof'?
-            (REVEALED_ATTRS_FIELD, toDictWithStrValues(revealedAttrs))])
+            (PROOF_FIELD, proof.to_str_dict()),
+            (PROOF_INPUT_FIELD, proofInput.to_str_dict()),
+            # TODO _F_ why do we need to send this? isn't the same data passed as keys in 'proof'?
+            (REVEALED_ATTRS_FIELD, json.dumps({k: v.to_str_dict() for k, v in revealedAttrs.items()}))
+        ])
 
         self.signAndSendToLink(msg=op, linkName=link.name)
 

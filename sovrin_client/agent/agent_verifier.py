@@ -5,7 +5,7 @@ from plenum.common.constants import NAME, NONCE, TYPE, DATA, VERSION, \
     ATTRIBUTES, VERIFIABLE_ATTRIBUTES
 from plenum.common.types import f
 
-from anoncreds.protocol.types import FullProof
+from anoncreds.protocol.types import FullProof, ProofInfo, ID, AggregatedProof, RequestedProof, AttributeInfo
 from anoncreds.protocol.types import ProofInput
 from anoncreds.protocol.utils import fromDictWithStrValues
 from anoncreds.protocol.verifier import Verifier
@@ -16,6 +16,8 @@ from sovrin_client.agent.msg_constants import PROOF_STATUS, PROOF_FIELD, \
     ERR_NO_PROOF_REQUEST_SCHEMA_FOUND
 from sovrin_client.client.wallet.link import Link
 from sovrin_common.util import getNonceForProof
+import uuid
+import json
 
 
 class AgentVerifier(Verifier):
@@ -30,16 +32,25 @@ class AgentVerifier(Verifier):
 
         proofName = body[NAME]
         nonce = getNonceForProof(body[NONCE])
-        proof = FullProof.fromStrDict(body[PROOF_FIELD])
-        proofInput = ProofInput.fromStrDict(body[PROOF_INPUT_FIELD])
-        revealedAttrs = fromDictWithStrValues(body[REVEALED_ATTRS_FIELD])
-        result = await self.verifier.verify(proofInput, proof,
-                                            revealedAttrs, nonce)
+        proof = body[PROOF_FIELD]
+
+        proofs = {}
+
+        for schemaId, p in proof['proofs'].items():
+            pk = await self._wallet.getPublicKey(ID(schemaId=schemaId))
+            proofs[schemaId] = ProofInfo.from_str_dict(p, str(pk.N))
+
+        proof = FullProof(proofs,
+                          AggregatedProof.from_str_dict(proof['aggregatedProof']),
+                          RequestedProof.from_str_dict(proof['requestedProof']))
+
+        proofInput = ProofInput.from_str_dict(body[PROOF_INPUT_FIELD])
+        result = await self.verifier.verify(proofInput, proof)
 
         self.logger.info('Proof "{}" accepted with nonce {}'
-                              .format(proofName, nonce))
+                         .format(proofName, nonce))
         self.logger.info('Verifying proof "{}" from {}'
-                              .format(proofName, link.name))
+                         .format(proofName, link.name))
         status = 'verified' if result else 'failed verification'
         resp = {
             TYPE: PROOF_STATUS,
@@ -50,30 +61,32 @@ class AgentVerifier(Verifier):
                          origReqId=body.get(f.REQ_ID.nm))
 
         if result:
-            for attribute in proofInput.revealedAttrs:
+            for uuid, attribute in proofInput.revealedAttrs.items():
                 # Log attributes that were verified
                 self.logger.info('verified {}: {}'.
-                                 format(attribute, revealedAttrs[attribute]))
-            self.logger.info('Verified that proof "{}" contains attributes '
-                             'from claim(s) issued by: {}'.format(
-                proofName, ", ".join(
-                    sorted([sk.issuerId for sk in proof.schemaKeys]))))
+                                 format(attribute.name, proof.requestedProof.revealed_attrs[uuid][1]))
+            # self.logger.info('Verified that proof "{}" contains attributes '
+            #                  'from claim(s) issued by: {}'.format(
+            #     proofName, ", ".join(
+            #         sorted([sk.issuerId for sk in proof.schemaKeys]))))
             await self._postProofVerif(proofName, link, frm)
         else:
             self.logger.info('Verification failed for proof {} from {} '
-                              .format(proofName, link.name))
+                             .format(proofName, link.name))
 
     def sendProofReq(self, link: Link, proofReqSchemaKey):
         if self._proofRequestsSchema and (
                     proofReqSchemaKey in self._proofRequestsSchema):
             proofRequest = self._proofRequestsSchema[proofReqSchemaKey]
+
             op = OrderedDict([
                 (TYPE, PROOF_REQUEST),
                 (NAME, proofRequest[PROOF_REQ_SCHEMA_NAME]),
                 (VERSION, proofRequest[PROOF_REQ_SCHEMA_VERSION]),
                 (ATTRIBUTES, proofRequest[PROOF_REQ_SCHEMA_ATTRIBUTES]),
                 (VERIFIABLE_ATTRIBUTES,
-                 proofRequest[PROOF_REQ_SCHEMA_VERIFIABLE_ATTRIBUTES])
+                 json.dumps({str(uuid.uuid4()): AttributeInfo(name=a).to_str_dict()
+                             for a in proofRequest[PROOF_REQ_SCHEMA_VERIFIABLE_ATTRIBUTES]}))
             ])
 
             self.signAndSendToLink(msg=op, linkName=link.name)

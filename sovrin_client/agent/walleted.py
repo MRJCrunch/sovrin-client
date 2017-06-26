@@ -25,7 +25,7 @@ from anoncreds.protocol.issuer import Issuer
 from anoncreds.protocol.prover import Prover
 from anoncreds.protocol.verifier import Verifier
 from anoncreds.protocol.globals import TYPE_CL
-from anoncreds.protocol.types import AttribDef, ID
+from anoncreds.protocol.types import AttribDef, ID, AttributeInfo
 from plenum.common.exceptions import NotConnectedToAny
 from plenum.common.constants import NAME, VERSION
 from sovrin_client.agent.agent_issuer import AgentIssuer
@@ -51,6 +51,7 @@ from sovrin_common.constants import ENDPOINT
 from sovrin_common.util import ensureReqCompleted
 from sovrin_common.config import agentLoggingLevel
 from plenum.common.constants import PUBKEY
+import uuid
 
 logger = getlogger()
 logger.setLevel(agentLoggingLevel)
@@ -785,7 +786,7 @@ class Walleted(AgentIssuer, AgentProver, AgentVerifier):
             for cr in proofRequestsJson:
                 proofRequests.append(
                     ProofRequest(cr[NAME], cr[VERSION], cr[ATTRIBUTES],
-                                 cr[VERIFIABLE_ATTRIBUTES]))
+                                 {str(uuid.uuid4()): AttributeInfo(name=a) for a in cr[VERIFIABLE_ATTRIBUTES]}))
 
         self.notifyMsgListener("1 link invitation found for {}.".
                                format(linkInvitationName))

@@ -57,7 +57,7 @@ class AgentIssuer:
         claimDetails = {
             CLAIMS_SIGNATURE_FIELD: signature.to_str_dict(),
             f.IDENTIFIER.nm: schema.issuerId,
-            CLAIM_FIELD: json.dumps(claim),
+            CLAIM_FIELD: json.dumps({k: v.to_str_dict() for k, v in claim.items()}),
             CLAIM_DEF_SEQ_NO: public_key.seqId,
             REVOC_REG_SEQ_NO: 0,
             SCHEMA_SEQ_NO: body[SCHEMA_SEQ_NO]
