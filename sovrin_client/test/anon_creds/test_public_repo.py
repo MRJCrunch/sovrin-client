@@ -105,6 +105,10 @@ def testGetSchema(submittedSchemaDefGvt, publicRepo, looper):
     schema = looper.run(publicRepo.getSchema(ID(schemaKey=key)))
     assert schema == submittedSchemaDefGvt
 
+def testGetSchemaBySeqNo(submittedSchemaDefGvt, publicRepo, looper):
+    schema = looper.run(publicRepo.getSchema(ID(schemaId=submittedSchemaDefGvt.seqId)))
+    assert schema == submittedSchemaDefGvt
+
 def testGetSchemaNonExistent(submittedSchemaDefGvt, publicRepo, looper):
     key = submittedSchemaDefGvt.getKey()
     key = key._replace(name=key.name+randomString(5))
@@ -125,6 +129,12 @@ def testGetPrimaryPublicKey(submittedSchemaDefGvtID, submittedPublicKey,
     non_existent_cd = looper.run(publicRepo.getPublicKey(
         id=submittedSchemaDefGvtID, signatureType='CL'))
     assert non_existent_cd is None
+
+
+def testGetPrimaryPublicKeyBySeqNo(submittedPublicKey, publicRepo, looper):
+    pk = looper.run(publicRepo.getPublicKey(seqId=submittedPublicKey.seqId))
+    assert pk == submittedPublicKey
+
 
 def testGetPrimaryPublicKeyNonExistent(submittedSchemaDefGvtID,
                             publicRepo, looper):

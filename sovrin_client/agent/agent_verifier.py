@@ -2,22 +2,17 @@ from typing import Any
 from collections import OrderedDict
 
 from plenum.common.constants import NAME, NONCE, TYPE, DATA, VERSION, \
-    ATTRIBUTES, VERIFIABLE_ATTRIBUTES
+    ATTRIBUTES, VERIFIABLE_ATTRIBUTES, PREDICATES
 from plenum.common.types import f
 
-from anoncreds.protocol.types import FullProof, ProofInfo, ID, AggregatedProof, RequestedProof, AttributeInfo
+from anoncreds.protocol.types import FullProof, ProofInfo, ID, AggregatedProof, RequestedProof
 from anoncreds.protocol.types import ProofInput
-from anoncreds.protocol.utils import fromDictWithStrValues
 from anoncreds.protocol.verifier import Verifier
-from sovrin_client.agent.msg_constants import PROOF_STATUS, PROOF_FIELD, \
-    PROOF_INPUT_FIELD, REVEALED_ATTRS_FIELD, PROOF_REQUEST, \
-    PROOF_REQ_SCHEMA_NAME, PROOF_REQ_SCHEMA_VERSION, \
-    PROOF_REQ_SCHEMA_ATTRIBUTES, PROOF_REQ_SCHEMA_VERIFIABLE_ATTRIBUTES, \
-    ERR_NO_PROOF_REQUEST_SCHEMA_FOUND
+from sovrin_client.agent.msg_constants import PROOF_STATUS, PROOF_FIELD,  PROOF_REQUEST, \
+    PROOF_REQUEST_FIELD, ERR_NO_PROOF_REQUEST_SCHEMA_FOUND
 from sovrin_client.client.wallet.link import Link
 from sovrin_common.util import getNonceForProof
-import uuid
-import json
+from sovrin_client.client.wallet.types import ProofRequest
 
 
 class AgentVerifier(Verifier):
@@ -30,21 +25,25 @@ class AgentVerifier(Verifier):
         if not link:
             raise NotImplementedError
 
-        proofName = body[NAME]
-        nonce = getNonceForProof(body[NONCE])
         proof = body[PROOF_FIELD]
+        proofRequest = ProofRequest.from_str_dict(body[PROOF_REQUEST_FIELD])
+        nonce = getNonceForProof(body[NONCE])
+        proofName = proofRequest.name
 
         proofs = {}
 
-        for schemaId, p in proof['proofs'].items():
-            pk = await self._wallet.getPublicKey(ID(schemaId=schemaId))
-            proofs[schemaId] = ProofInfo.from_str_dict(p, str(pk.N))
+        for key, p in proof['proofs'].items():
+            schema = await self.verifier.wallet.getSchema(ID(schemaId=int(p['schema_seq_no'])))
+            pk = await self.verifier.wallet.getPublicKey(ID(schemaKey=schema.getKey()))
+            proofs[key] = ProofInfo.from_str_dict(p, str(pk.N))
 
         proof = FullProof(proofs,
-                          AggregatedProof.from_str_dict(proof['aggregatedProof']),
-                          RequestedProof.from_str_dict(proof['requestedProof']))
+                          AggregatedProof.from_str_dict(proof['aggregated_proof']),
+                          RequestedProof.from_str_dict(proof['requested_proof']))
 
-        proofInput = ProofInput.from_str_dict(body[PROOF_INPUT_FIELD])
+        proofInput = ProofInput(nonce=int(proofRequest.nonce),
+                                revealedAttrs=proofRequest.verifiableAttributes,
+                                predicates=proofRequest.predicates)
         result = await self.verifier.verify(proofInput, proof)
 
         self.logger.info('Proof "{}" accepted with nonce {}'
@@ -55,7 +54,7 @@ class AgentVerifier(Verifier):
         resp = {
             TYPE: PROOF_STATUS,
             DATA: '    Your Proof {} {} was received and {}\n'.
-                format(body[NAME], body[VERSION], status),
+                format(proofRequest.name, proofRequest.version, status),
         }
         self.signAndSend(resp, link.localIdentifier, frm,
                          origReqId=body.get(f.REQ_ID.nm))
@@ -79,14 +78,18 @@ class AgentVerifier(Verifier):
                     proofReqSchemaKey in self._proofRequestsSchema):
             proofRequest = self._proofRequestsSchema[proofReqSchemaKey]
 
+            proofRequest = ProofRequest(
+                proofRequest[NAME],
+                proofRequest[VERSION],
+                str(getNonceForProof(link.invitationNonce)),
+                proofRequest[ATTRIBUTES],
+                proofRequest[VERIFIABLE_ATTRIBUTES] if VERIFIABLE_ATTRIBUTES in proofRequest else [],
+                proofRequest[PREDICATES] if PREDICATES in proofRequest else []
+            )
+
             op = OrderedDict([
                 (TYPE, PROOF_REQUEST),
-                (NAME, proofRequest[PROOF_REQ_SCHEMA_NAME]),
-                (VERSION, proofRequest[PROOF_REQ_SCHEMA_VERSION]),
-                (ATTRIBUTES, proofRequest[PROOF_REQ_SCHEMA_ATTRIBUTES]),
-                (VERIFIABLE_ATTRIBUTES,
-                 json.dumps({str(uuid.uuid4()): AttributeInfo(name=a).to_str_dict()
-                             for a in proofRequest[PROOF_REQ_SCHEMA_VERIFIABLE_ATTRIBUTES]}))
+                (PROOF_REQUEST_FIELD, proofRequest.to_str_dict())
             ])
 
             self.signAndSendToLink(msg=op, linkName=link.name)

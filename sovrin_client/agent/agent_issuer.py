@@ -1,7 +1,5 @@
 from abc import abstractmethod
 from typing import Dict, Any
-
-from plenum.common.constants import NAME, VERSION, ORIGIN
 import json
 from plenum.common.types import f
 
@@ -12,7 +10,7 @@ from sovrin_client.agent.constants import EVENT_NOTIFY_MSG, CLAIMS_LIST_FIELD
 from sovrin_client.agent.msg_constants import CLAIM, CLAIM_REQ_FIELD, CLAIM_FIELD, \
     AVAIL_CLAIM_LIST, CLAIM_DEF_SEQ_NO, REVOC_REG_SEQ_NO, CLAIMS_SIGNATURE_FIELD, SCHEMA_SEQ_NO
 from sovrin_common.identity import Identity
-
+from plenum.common.constants import DATA
 from sovrin_client.client.wallet.attribute import Attribute
 
 
@@ -35,7 +33,9 @@ class AgentIssuer:
         if not link:
             raise NotImplementedError
 
-        schemaId = ID(schemaId=body[SCHEMA_SEQ_NO])
+        claimReqDetails = body[DATA]
+
+        schemaId = ID(schemaId=claimReqDetails[SCHEMA_SEQ_NO])
         schema = await self.issuer.wallet.getSchema(schemaId)
 
         if not self.is_claim_available(link, schema.name):
@@ -46,7 +46,7 @@ class AgentIssuer:
             return
 
         public_key = await self.issuer.wallet.getPublicKey(schemaId)
-        claimReq = ClaimRequest.from_str_dict(body[CLAIM_REQ_FIELD], public_key.N)
+        claimReq = ClaimRequest.from_str_dict(claimReqDetails[CLAIM_REQ_FIELD], public_key.N)
 
         schemaKey = SchemaKey(schema.name, schema.version, schema.issuerId)
         self._add_attribute(schemaKey=schemaKey, proverId=claimReq.userId,
@@ -59,8 +59,8 @@ class AgentIssuer:
             f.IDENTIFIER.nm: schema.issuerId,
             CLAIM_FIELD: json.dumps({k: v.to_str_dict() for k, v in claim.items()}),
             CLAIM_DEF_SEQ_NO: public_key.seqId,
-            REVOC_REG_SEQ_NO: 0,
-            SCHEMA_SEQ_NO: body[SCHEMA_SEQ_NO]
+            REVOC_REG_SEQ_NO: None,
+            SCHEMA_SEQ_NO: claimReqDetails[SCHEMA_SEQ_NO]
         }
 
         resp = self.getCommonMsg(CLAIM, claimDetails)
