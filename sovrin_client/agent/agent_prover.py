@@ -3,20 +3,17 @@ import json
 from typing import Any
 from collections import OrderedDict
 
-from plenum.common.constants import NONCE, TYPE, NAME, VERSION, ORIGIN, IDENTIFIER, \
-    DATA, VERIFIABLE_ATTRIBUTES, ATTRIBUTES
+from plenum.common.constants import NONCE, TYPE, IDENTIFIER, DATA
 from plenum.common.types import f
 from plenum.common.util import getCryptonym
 
 from anoncreds.protocol.prover import Prover
-from anoncreds.protocol.types import SchemaKey, ID, Claims, ProofInput
-from anoncreds.protocol.utils import toDictWithStrValues
+from anoncreds.protocol.types import SchemaKey, ID, Claims, ProofInput, AttributeValues
 from sovrin_client.agent.msg_constants import CLAIM_REQUEST, PROOF, CLAIM_FIELD, \
-    CLAIM_REQ_FIELD, PROOF_FIELD, PROOF_INPUT_FIELD, REVEALED_ATTRS_FIELD, \
-    REQ_AVAIL_CLAIMS, ISSUER_DID, CLAIM_DEF_SEQ_NO, CLAIMS_SIGNATURE_FIELD, SCHEMA_SEQ_NO
+    CLAIM_REQ_FIELD, PROOF_FIELD, REVEALED_ATTRS_FIELD, \
+    REQ_AVAIL_CLAIMS, ISSUER_DID, CLAIM_DEF_SEQ_NO, CLAIMS_SIGNATURE_FIELD, SCHEMA_SEQ_NO, PROOF_REQUEST_FIELD
 from sovrin_client.client.wallet.types import ProofRequest
 from sovrin_client.client.wallet.link import Link
-from sovrin_common.util import getNonceForProof
 from sovrin_common.exceptions import LinkNotReady
 
 
@@ -67,13 +64,17 @@ class AgentProver:
         public_key = await self.prover.wallet.getPublicKey(ID(schema_key))
         schema = await self.prover.wallet.getSchema(ID(schema_key))
 
+        claimRequestDetails = {
+            SCHEMA_SEQ_NO: schema.seqId,
+            ISSUER_DID: origin,
+            CLAIM_DEF_SEQ_NO: public_key.seqId,
+            CLAIM_REQ_FIELD: claimReq.to_str_dict()
+        }
+
         op = {
             TYPE: CLAIM_REQUEST,
             NONCE: link.invitationNonce,
-            SCHEMA_SEQ_NO: schema.seqId,
-            ISSUER_DID: origin,
-            CLAIM_REQ_FIELD: claimReq.to_str_dict(),
-            CLAIM_DEF_SEQ_NO: public_key.seqId
+            DATA: claimRequestDetails
         }
 
         self.signAndSendToLink(msg=op, linkName=link.name)
@@ -81,7 +82,9 @@ class AgentProver:
     def handleProofRequest(self, msg):
         body, _ = msg
         link = self._getLinkByTarget(getCryptonym(body.get(IDENTIFIER)))
-        proofReqName = body.get(NAME)
+        proofRequest = body.get(PROOF_REQUEST_FIELD)
+        proofRequest = ProofRequest.from_str_dict(proofRequest)
+        proofReqName = proofRequest.name
         proofReqExist = False
 
         for request in link.proofRequests:
@@ -93,14 +96,7 @@ class AgentProver:
                                .format(proofReqName, link.name))
 
         if not proofReqExist:
-            link.proofRequests.append(
-                ProofRequest(
-                    name=proofReqName,
-                    version=body.get(VERSION),
-                    attributes=body.get(ATTRIBUTES),
-                    verifiableAttributes=body.get(VERIFIABLE_ATTRIBUTES)
-                )
-            )
+            link.proofRequests.append(proofRequest)
         else:
             self.notifyMsgListener('    Proof request {} already exist.\n'
                                    .format(proofReqName))
@@ -117,7 +113,7 @@ class AgentProver:
 
             pk = await self.prover.wallet.getPublicKey(schemaId)
 
-            claims = json.loads(claim[CLAIM_FIELD])
+            claims = {k: AttributeValues.from_str_dict(v) for k, v in json.loads(claim[CLAIM_FIELD]).items()}
             signature = Claims.from_str_dict(claim[CLAIMS_SIGNATURE_FIELD], pk.N)
 
             await self.prover.processClaim(schemaId, claims, signature)
@@ -134,21 +130,22 @@ class AgentProver:
     async def sendProofAsync(self, link: Link, proofRequest: ProofRequest):
         # TODO _F_ this nonce should be from the Proof Request, not from an
         # invitation
-        nonce = getNonceForProof(link.invitationNonce)
-
-        revealedAttrNames = proofRequest.verifiableAttributes
-        proofInput = ProofInput(revealedAttrs=revealedAttrNames)
+        proofInput = ProofInput(nonce=int(proofRequest.nonce),
+                                revealedAttrs=proofRequest.verifiableAttributes,
+                                predicates=proofRequest.predicates)
         # TODO rename presentProof to buildProof or generateProof
-        proof, revealedAttrs = await self.prover.presentProof(proofInput, nonce)
-        revealedAttrs.update(proofRequest.selfAttestedAttrs)
+
+        proof = await self.prover.presentProof(proofInput)
+        proof.requestedProof.self_attested_attrs.update(proofRequest.selfAttestedAttrs)
         op = OrderedDict([
             (TYPE, PROOF),
-            (NAME, proofRequest.name),
-            (VERSION, proofRequest.version),
             (NONCE, link.invitationNonce),
-            (PROOF_FIELD, proof.toStrDict()),
-            (PROOF_INPUT_FIELD, proofInput.toStrDict()),  # TODO _F_ why do we need to send this? isn't the same data passed as keys in 'proof'?
-            (REVEALED_ATTRS_FIELD, toDictWithStrValues(revealedAttrs))])
+            (PROOF_FIELD, proof.to_str_dict()),
+            (PROOF_REQUEST_FIELD, proofRequest.to_str_dict()),
+            # TODO _F_ why do we need to send this? isn't the same data passed as keys in 'proof'?
+            (REVEALED_ATTRS_FIELD,
+             json.dumps({k: v.to_str_dict() for k, v in proofRequest.verifiableAttributes.items()}))
+        ])
 
         self.signAndSendToLink(msg=op, linkName=link.name)
 
@@ -181,7 +178,7 @@ class AgentProver:
             if attrs:
                 if set(claimAttrs.keys()).intersection(attrs.keys()):
                     for k in claimAttrs.keys():
-                        claimAttrs[k] = attrs[k][0]
+                        claimAttrs[k] = attrs[k].raw
             matchingLinkAndReceivedClaim.append((li, cl, claimAttrs))
         return matchingLinkAndReceivedClaim
 

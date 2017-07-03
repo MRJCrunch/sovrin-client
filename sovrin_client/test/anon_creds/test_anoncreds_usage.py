@@ -1,7 +1,7 @@
 import pytest
 
 from anoncreds.protocol.repo.attributes_repo import AttributeRepoInMemory
-from anoncreds.protocol.types import ID, ProofInput, PredicateGE
+from anoncreds.protocol.types import ID, ProofInput, PredicateGE, AttributeInfo
 from sovrin_client.anon_creds.sovrin_issuer import SovrinIssuer
 from sovrin_client.anon_creds.sovrin_prover import SovrinProver
 from sovrin_client.anon_creds.sovrin_verifier import SovrinVerifier
@@ -53,11 +53,12 @@ def testAnonCredsPrimaryOnly(issuer, prover, verifier, attrRepo, primes1, looper
 
         # 6. proof Claims
         proofInput = ProofInput(
-            ['name'],
-            [PredicateGE('age', 18)])
+            verifier.generateNonce(),
+            {'attr_uuid': AttributeInfo('name', schema.seqId)},
+            {'predicate_uuid': PredicateGE('age', 18)})
 
-        nonce = verifier.generateNonce()
-        proof, revealedAttrs = await prover.presentProof(proofInput, nonce)
-        assert await verifier.verify(proofInput, proof, revealedAttrs, nonce)
+        proof = await prover.presentProof(proofInput)
+        assert proof.requestedProof.revealed_attrs['attr_uuid'][1] == 'Alex'
+        assert await verifier.verify(proofInput, proof)
 
     looper.run(doTestAnonCredsPrimaryOnly)

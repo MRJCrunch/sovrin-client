@@ -26,6 +26,7 @@ PROOF_FIELD = 'proof'
 PROOF_INPUT_FIELD = 'proofInput'
 REVEALED_ATTRS_FIELD = 'revealedAttrs'
 SCHEMA_SEQ_NO = 'schema_seq_no'
+PROOF_REQUEST_FIELD = 'proof_request'
 
 # Proof request schema keys
 PROOF_REQ_SCHEMA_NAME = 'name'

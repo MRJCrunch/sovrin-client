@@ -1,44 +1,45 @@
 from sovrin_client.test import waits
 from stp_core.loop.eventually import eventually
-from anoncreds.protocol.types import SchemaKey, ID
-from sovrin_client.test.agent.messages import get_claim_request_libsovrin_msg
+from anoncreds.protocol.types import SchemaKey, ID, ProofInput
+from sovrin_client.test.agent.messages import get_proof_libsovrin_msg
 
 
-def test_claim_request_from_libsovrin_works(aliceAgent, aliceAcceptedFaber, aliceAcceptedAcme,
-                  acmeAgent, emptyLooper, faberAgent):
+def test_proof_from_libsovrin_works(aliceAgent, aliceAcceptedFaber, aliceAcceptedAcme,
+                                    acmeAgent, emptyLooper, faberAgent):
+    # 1. request Claims from Faber
     faberLink = aliceAgent.wallet.getLink('Faber College')
     name, version, origin = faberLink.availableClaims[0]
     schemaKey = SchemaKey(name, version, origin)
-    timeout = waits.expectedClaimsReceived()
+    aliceAgent.sendReqClaim(faberLink, schemaKey)
 
     schema = faberAgent.issuer.wallet._schemasByKey[schemaKey]
     pk = faberAgent.issuer.wallet._pks[schemaKey]
 
-    async def create_claim_init_data_and_send_msg():
-        claimReq = await aliceAgent.prover.createClaimRequest(
-            schemaId=ID(schemaKey),
-            proverId='b1134a647eb818069c089e7694f63e6d',
-            reqNonRevoc=False)
-
-        assert claimReq
-
-        msg = get_claim_request_libsovrin_msg(claimReq, schema.seqId, pk.seqId)
-
-        aliceAgent.signAndSendToLink(msg=msg, linkName=faberLink.name)
-
-    emptyLooper.run(eventually(create_claim_init_data_and_send_msg, timeout=timeout))
 
     # 2. check that claim is received from Faber
     async def chkClaims():
         claim = await aliceAgent.prover.wallet.getClaimSignature(ID(schemaKey))
         assert claim.primaryClaim
 
+    timeout = waits.expectedClaimsReceived()
     emptyLooper.run(eventually(chkClaims, timeout=timeout))
 
     # 3. send proof to Acme
     acme_link, acme_proof_req = aliceAgent.wallet.getMatchingLinksWithProofReq(
         "Job-Application", "Acme Corp")[0]
-    aliceAgent.sendProof(acme_link, acme_proof_req)
+
+    async def create_proof():
+        proof_input = ProofInput(nonce=int(acme_proof_req.nonce),
+                                 revealedAttrs=acme_proof_req.verifiableAttributes,
+                                 predicates=acme_proof_req.predicates)
+
+        proof = await  aliceAgent.prover.presentProof(proof_input)
+
+        msg = get_proof_libsovrin_msg(acme_link, acme_proof_req, proof, str(schema.seqId), schema.seqId)
+
+        aliceAgent.signAndSendToLink(msg=msg, linkName=acme_link.name)
+
+    emptyLooper.run(eventually(create_proof, timeout=timeout))
 
     # 4. check that proof is verified by Acme
     def chkProof():
@@ -46,5 +47,4 @@ def test_claim_request_from_libsovrin_works(aliceAgent, aliceAcceptedFaber, alic
         link = acmeAgent.wallet.getLinkBy(internalId=internalId)
         assert "Job-Application" in link.verifiedClaimProofs
 
-    timeout = waits.expectedClaimsReceived()
     emptyLooper.run(eventually(chkProof, timeout=timeout))

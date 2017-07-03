@@ -10,7 +10,7 @@ from plenum.common.constants import TARGET_NYM, TXN_TYPE, DATA, NAME, \
     VERSION, TYPE, ORIGIN
 
 from sovrin_common.constants import GET_SCHEMA, SCHEMA, ATTR_NAMES, \
-    GET_CLAIM_DEF, REF, CLAIM_DEF, PRIMARY, REVOCATION
+    GET_CLAIM_DEF, REF, CLAIM_DEF, PRIMARY, REVOCATION, GET_TXNS
 
 from anoncreds.protocol.repo.public_repo import PublicRepo
 from anoncreds.protocol.types import Schema, ID, PublicKey, \
@@ -54,14 +54,21 @@ class SovrinPublicRepo(PublicRepo):
         self.displayer = print
 
     async def getSchema(self, id: ID) -> Optional[Schema]:
-        op = {
-            TARGET_NYM: id.schemaKey.issuerId,
-            TXN_TYPE: GET_SCHEMA,
-            DATA: {
-                NAME: id.schemaKey.name,
-                VERSION: id.schemaKey.version,
+        if id.schemaKey:
+            op = {
+                TARGET_NYM: id.schemaKey.issuerId,
+                TXN_TYPE: GET_SCHEMA,
+                DATA: {
+                    NAME: id.schemaKey.name,
+                    VERSION: id.schemaKey.version,
+                }
             }
-        }
+        else:
+            op = {
+                TXN_TYPE: GET_TXNS,
+                DATA: id.schemaId
+            }
+
         data, seqNo = await self._sendGetReq(op)
         return Schema(name=data[NAME],
                       version=data[VERSION],
@@ -69,14 +76,21 @@ class SovrinPublicRepo(PublicRepo):
                       issuerId=data[ORIGIN],
                       seqId=seqNo) if data else None
 
-    async def getPublicKey(self, id: ID,
-                           signatureType = 'CL') -> Optional[PublicKey]:
-        op = {
-            TXN_TYPE: GET_CLAIM_DEF,
-            REF: id.schemaId,
-            ORIGIN: id.schemaKey.issuerId,
-            SIGNATURE_TYPE: signatureType
-        }
+    async def getPublicKey(self, id: ID = None,
+                           signatureType='CL', seqId=None) -> Optional[PublicKey]:
+        if id:
+            op = {
+                TXN_TYPE: GET_CLAIM_DEF,
+                REF: id.schemaId,
+                ORIGIN: id.schemaKey.issuerId,
+                SIGNATURE_TYPE: signatureType
+            }
+        else:
+            op = {
+                TXN_TYPE: GET_TXNS,
+                DATA: seqId
+            }
+
         data, seqNo = await self._sendGetReq(op)
         if not data:
             return None
