@@ -30,8 +30,7 @@ class ProofRequest:
             "version": self.version,
             "nonce": self.nonce,
             "attributes": self.attributes,
-            "verifiableAttributes": self.verifiableAttributes,
-            "predicates": self.predicates
+            "verifiableAttributes": self.verifiableAttributes
         }
 
     def to_str_dict(self):

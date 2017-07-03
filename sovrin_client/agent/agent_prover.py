@@ -178,7 +178,7 @@ class AgentProver:
             if attrs:
                 if set(claimAttrs.keys()).intersection(attrs.keys()):
                     for k in claimAttrs.keys():
-                        claimAttrs[k] = attrs[k][0]
+                        claimAttrs[k] = attrs[k].raw
             matchingLinkAndReceivedClaim.append((li, cl, claimAttrs))
         return matchingLinkAndReceivedClaim
 
