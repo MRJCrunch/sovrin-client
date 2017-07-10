@@ -26,7 +26,7 @@ from plenum.cli.helper import getClientGrams
 from plenum.cli.phrase_word_completer import PhraseWordCompleter
 from plenum.common.signer_did import DidSigner
 from plenum.common.signer_simple import SimpleSigner
-from plenum.common.constants import NAME, VERSION, TYPE, VERKEY, DATA, TXN_ID
+from plenum.common.constants import NAME, VERSION, TYPE, VERKEY, DATA, TXN_ID, FORCE
 from plenum.common.txn_util import createGenesisTxnFile
 from plenum.common.types import f
 from plenum.common.util import randomString, getWalletFilePath
@@ -38,6 +38,7 @@ from sovrin_client.agent.msg_constants import ERR_NO_PROOF_REQUEST_SCHEMA_FOUND
 from sovrin_client.cli.command import acceptLinkCmd, connectToCmd, \
     disconnectCmd, loadFileCmd, newIdentifierCmd, pingTargetCmd, reqClaimCmd, \
     sendAttribCmd, sendProofCmd, sendGetNymCmd, sendClaimDefCmd, sendNodeCmd, \
+    sendGetAttrCmd, sendGetSchemaCmd, sendGetClaimDefCmd, \
     sendNymCmd, sendPoolUpgCmd, sendSchemaCmd, setAttrCmd, showClaimCmd, \
     listClaimsCmd, showFileCmd, showLinkCmd, syncLinkCmd, addGenesisTxnCmd, \
     sendProofRequestCmd, showProofRequestCmd, reqAvailClaimsCmd, listLinksCmd
@@ -58,7 +59,7 @@ from sovrin_common.exceptions import InvalidLinkException, LinkAlreadyExists, \
     LinkNotFound, NotConnectedToNetwork, SchemaNotFound
 from sovrin_common.identity import Identity
 from sovrin_common.constants import TARGET_NYM, ROLE, TXN_TYPE, NYM, REF, \
-    ACTION, SHA256, TIMEOUT, SCHEDULE, \
+    ACTION, SHA256, TIMEOUT, SCHEDULE, GET_SCHEMA, \
     START, JUSTIFICATION, NULL
 
 from stp_core.crypto.signer import Signer
@@ -208,10 +209,13 @@ class SovrinCli(PlenumCli):
             actions.extend([self._sendNymAction,
                             self._sendGetNymAction,
                             self._sendAttribAction,
+                            self._sendGetAttrAction,
                             self._sendNodeAction,
                             self._sendPoolUpgAction,
                             self._sendSchemaAction,
+                            self._sendGetSchemaAction,
                             self._sendClaimDefAction,
+                            self._sendGetClaimDefAction,
                             self._addGenTxnAction,
                             self._showFile,
                             self._loadFile,
@@ -455,7 +459,7 @@ class SovrinCli(PlenumCli):
             if client_action == 'add':
                 otherClientName = matchedVars.get('other_client_name')
                 role = self._getRole(matchedVars)
-                signer = SimpleSigner()
+                signer = DidSigner()
                 nym = signer.verstr
                 return self._addNym(nym, Identity.correctRole(role),
                                     newVerKey=None,
@@ -489,6 +493,10 @@ class SovrinCli(PlenumCli):
 
         def getNymReply(reply, err, *args):
             try:
+                if err:
+                    self.print("Error: {}".format(err), Token.BoldOrange)
+                    return
+
                 if reply and reply[DATA]:
                     data=json.loads(reply[DATA])
                     if data:
@@ -567,6 +575,77 @@ class SovrinCli(PlenumCli):
         self.looper.loop.call_later(.2, self._ensureReqCompleted,
                                     req.key, self.activeClient, out)
 
+    def _getAttr(self, nym, raw, enc, hsh):
+        assert int(bool(raw)) + int(bool(enc)) + int(bool(hsh)) == 1
+        if raw:
+            l = LedgerStore.RAW
+            data = raw
+        elif enc:
+            l = LedgerStore.ENC
+            data = enc
+        elif hsh:
+            l = LedgerStore.HASH
+            data = hsh
+        else:
+            raise RuntimeError('One of raw, enc, or hash are required.')
+
+        attrib = Attribute(data, dest=nym, ledgerStore=l)
+        req = self.activeWallet.requestAttribute(attrib, sender=self.activeWallet.defaultId)
+        self.activeClient.submitReqs(req)
+        self.print("Getting attr {}".format(nym))
+
+        def getAttrReply(reply, err, *args):
+            if reply and reply[DATA]:
+                data=json.loads(reply[DATA])
+                if data:
+                    self.print(
+                    "Found attribute {}"
+                    .format(json.dumps(data)))
+            else:
+                self.print("Attr not found")
+
+        self.looper.loop.call_later(.2, self._ensureReqCompleted,
+                                    req.key, self.activeClient, getAttrReply)
+
+    def _getSchema(self, nym, name, version):
+        req = self.activeWallet.requestSchema(nym,name,version,sender=self.activeWallet.defaultId)
+        self.activeClient.submitReqs(req)
+        self.print("Getting schema {}".format(nym))
+
+        def getSchema(reply, err, *args):
+            try:
+                if reply and reply[DATA]:
+                    self.print(
+                        "Found schema {}"
+                        .format(reply[DATA]))
+                else:
+                    self.print("Schema not found")
+            except:
+                self.print('"data" must be in proper format', Token.Error)
+
+
+        self.looper.loop.call_later(.2, self._ensureReqCompleted,
+                                    req.key, self.activeClient, getSchema)
+
+    def _getClaimDef(self, seqNo, signature):
+        req = self.activeWallet.requestClaimDef(seqNo, signature, sender=self.activeWallet.defaultId)
+        self.activeClient.submitReqs(req)
+        self.print("Getting claim def {}".format(seqNo))
+
+        def getClaimDef(reply, err, *args):
+            try:
+                if reply and reply[DATA]:
+                    self.print(
+                    "Found claim def {}"
+                    .format(reply[DATA]))
+                else:
+                    self.print("Claim def not found")
+            except:
+                self.print('"data" must be in proper format', Token.Error)
+
+        self.looper.loop.call_later(.2, self._ensureReqCompleted,
+                                    req.key, self.activeClient, getClaimDef)
+
     def _sendNodeTxn(self, nym, data):
         node = Node(nym, data, self.activeIdentifier)
         self.activeWallet.addNode(node)
@@ -587,10 +666,10 @@ class SovrinCli(PlenumCli):
                                     req.key, self.activeClient, out)
 
     def _sendPoolUpgTxn(self, name, version, action, sha256, schedule=None,
-                        justification=None, timeout=None):
+                        justification=None, timeout=None, force=False):
         upgrade = Upgrade(name, version, action, sha256, schedule=schedule,
                           trustee=self.activeIdentifier, timeout=timeout,
-                          justification=justification)
+                          justification=justification, force=force)
         self.activeWallet.doPoolUpgrade(upgrade)
         reqs = self.activeWallet.preparePending()
         req, = self.activeClient.submitReqs(*reqs)
@@ -655,6 +734,43 @@ class SovrinCli(PlenumCli):
             self._addAttribToNym(nym, raw, enc, hsh)
             return True
 
+    def _sendGetAttrAction(self, matchedVars):
+        if matchedVars.get('send_get_attr') == sendGetAttrCmd.id:
+            if not self.hasAnyKey:
+                return True
+            if not self.canMakeSovrinRequest:
+                return True
+            nym = matchedVars.get('dest_id')
+            raw = matchedVars.get('raw') \
+                if matchedVars.get('raw') else None
+            enc = ast.literal_eval(matchedVars.get('enc')) \
+                if matchedVars.get('enc') else None
+            hsh = matchedVars.get('hash') \
+                if matchedVars.get('hash') else None
+            self._getAttr(nym,raw,enc,hsh)
+            return True
+
+    def _sendGetSchemaAction(self, matchedVars):
+        if matchedVars.get('send_get_schema') == sendGetSchemaCmd.id:
+            if not self.canMakeSovrinRequest:
+                return True
+            self.logger.debug("Processing GET_SCHEMA request")
+            nym = matchedVars.get('dest_id')
+            name = matchedVars.get('name')
+            version = matchedVars.get('version')
+            self._getSchema(nym,name,version)
+            return True
+
+    def _sendGetClaimDefAction(self, matchedVars):
+        if matchedVars.get('send_get_claim_def') == sendGetClaimDefCmd.id:
+            if not self.canMakeSovrinRequest:
+                return True
+            self.logger.debug("Processing GET_CLAIM_DEF request")
+            seqNo = int(matchedVars.get('ref'))
+            signature = matchedVars.get('signature_type')
+            self._getClaimDef(seqNo,signature)
+            return True
+
     def _sendNodeAction(self, matchedVars):
         if matchedVars.get('send_node') == sendNodeCmd.id:
             if not self.canMakeSovrinRequest:
@@ -679,6 +795,8 @@ class SovrinCli(PlenumCli):
             timeout = matchedVars.get(TIMEOUT)
             schedule = matchedVars.get(SCHEDULE)
             justification = matchedVars.get(JUSTIFICATION)
+            force = matchedVars.get(FORCE, "False")
+            force = force == "True"
             if action == START:
                 if not schedule:
                     self.print('{} need to be provided'.format(SCHEDULE),
@@ -698,7 +816,7 @@ class SovrinCli(PlenumCli):
                 timeout = int(timeout.strip())
             self._sendPoolUpgTxn(name, version, action, sha256,
                                  schedule=schedule, timeout=timeout,
-                                 justification=justification)
+                                 justification=justification, force=force)
             return True
 
     def _sendSchemaAction(self, matchedVars):
@@ -744,11 +862,10 @@ class SovrinCli(PlenumCli):
                        Token.BoldOrange)
             return False
 
-        self.print("The following claim definition is published to the"
-                   " Sovrin distributed ledger\n", Token.BoldBlue,
+        self.print("The claim definition was published to the"
+                   " Sovrin distributed ledger:\n", Token.BoldBlue,
                    newline=False)
-        self.print("{}".format(str(pk)))
-        self.print("Sequence number is {}".format(pk.seqId),
+        self.print("Sequence number is {}".format(pk[0].seqId),
                    Token.BoldBlue)
 
         return True
@@ -1178,7 +1295,7 @@ class SovrinCli(PlenumCli):
                 self._printNoClaimFoundMsg()
             return True
 
-    def _createNewIdentifier(self, isAbbr, isCrypto, identifier, seed,
+    def _createNewIdentifier(self, identifier, seed,
                              alias=None):
         if not self.isValidSeedForNewKey(seed):
             return True
@@ -1188,19 +1305,13 @@ class SovrinCli(PlenumCli):
 
         cseed = cleanSeed(seed)
 
-        if isCrypto:
-            signer = SimpleSigner(identifier=identifier,
-                                  seed=cseed, alias=alias)
-        else:
-            signer = DidSigner(identifier=identifier, seed=cseed, alias=alias)
-
-        if not isAbbr and not identifier:
-            identifier = signer.identifier
+        signer = DidSigner(identifier=identifier, seed=cseed, alias=alias)
 
         id, signer = self.activeWallet.addIdentifier(identifier,
                                                      seed=cseed, alias=alias)
         self.print("Identifier created in keyring {}".format(self.activeWallet))
-        self.print("Key for identifier is {}".format(signer.verkey))
+        self.print("New identifier is {}".format(signer.identifier))
+        self.print("New verification key is {}".format(signer.verkey))
         self._setActiveIdentifier(id)
 
     def _reqAvailClaims(self, matchedVars):
@@ -1213,21 +1324,11 @@ class SovrinCli(PlenumCli):
 
     def _newIdentifier(self, matchedVars):
         if matchedVars.get('new_id') == newIdentifierCmd.id:
-            id_or_abbr_or_crypto = matchedVars.get('id_or_abbr_or_crypto')
-            isAbbr = False
-            isCrypto = False
-            identifier = None
+            identifier = matchedVars.get('id')
             alias = matchedVars.get('alias')
-            if id_or_abbr_or_crypto:
-                if id_or_abbr_or_crypto == "abbr":
-                    isAbbr = True
-                elif id_or_abbr_or_crypto == "crypto":
-                    isCrypto = True
-                else:
-                    identifier = id_or_abbr_or_crypto
 
             seed = matchedVars.get('seed')
-            self._createNewIdentifier(isAbbr, isCrypto, identifier, seed, alias)
+            self._createNewIdentifier(identifier, seed, alias)
             return True
 
     def _sendProof(self, matchedVars):
@@ -1797,10 +1898,13 @@ class SovrinCli(PlenumCli):
         mappings['sendNymAction'] = sendNymCmd
         mappings['sendGetNymAction'] = sendGetNymCmd
         mappings['sendAttribAction'] = sendAttribCmd
+        mappings['sendGetAttrAction'] = sendGetAttrCmd
         mappings['sendNodeAction'] = sendNodeCmd
         mappings['sendPoolUpgAction'] = sendPoolUpgCmd
         mappings['sendSchemaAction'] = sendSchemaCmd
+        mappings['sendGetSchemaAction'] = sendGetSchemaCmd
         mappings['sendClaimDefAction'] = sendClaimDefCmd
+        mappings['sendGetClaimDefAction'] = sendGetClaimDefCmd
         mappings['showFile'] = showFileCmd
         mappings['loadFile'] = loadFileCmd
         mappings['showLink'] = showLinkCmd
